@@ -130,8 +130,9 @@ public class EcgFileModel implements IConstants
         dos.write(saveData);
         dos.close();
         // Write it to the file (This CTOR does not append)
-        OutputStream outputStream = new FileOutputStream(file);
-        baos.writeTo(outputStream);
+        OutputStream os = new FileOutputStream(file);
+        baos.writeTo(os);
+        os.close();
     }
 
     public static String getString(byte[] bytes) throws IOException {

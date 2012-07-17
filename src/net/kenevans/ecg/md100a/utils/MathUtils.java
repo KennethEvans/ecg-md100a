@@ -6,7 +6,9 @@ public class MathUtils
 {
     /**
      * Quicksort filter. Use low = 0 and high = length - 1 to sort the whole
-     * array. From vogella.de.
+     * array. From <a href=
+     * "http://www.vogella.com/articles/JavaAlgorithmsQuicksort/article.html"
+     * >http://www.vogella.com/articles/JavaAlgorithmsQuicksort/article.html<a>
      * 
      * @param array The array to sort.
      * @param low Starting index of the part of the array to sort.
@@ -50,7 +52,10 @@ public class MathUtils
     }
 
     /**
-     * Quicksort from Roselinda. Fails if two elements are equal. Don't use.
+     * Quicksort from RoseIndia. Fails if two elements are equal. Don't use.
+     * From <a href=
+     * "http://www.roseindia.net/java/beginners/arrayexamples/QuickSort.shtml"
+     * >http://www.roseindia.net/java/beginners/arrayexamples/QuickSort.shtml<a>
      * 
      * @param array
      * @param low
