@@ -6,15 +6,19 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Frame;
 import java.awt.Paint;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
+import java.util.List;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
+import javax.swing.JButton;
+import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -29,6 +33,7 @@ import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JSplitPane;
+import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
@@ -70,9 +75,11 @@ public class EcgStripViewer extends JFrame implements IConstants
     /** The frame width. */
     private static final int WIDTH = 1200;
     /** The frame height. */
-    private static final int HEIGHT = 600;
-    /** The divider location. */
-    private static final int MAIN_PANE_DIVIDER_LOCATION = 2 * HEIGHT / 3;
+    private static final int HEIGHT = 825;
+    /** The divider location for the main split pane. */
+    private static final int MAIN_PANE_DIVIDER_LOCATION = 5 * HEIGHT / 8;
+    /** The divider location for the lower split pane. */
+    private static final int LOWER_PANE_DIVIDER_LOCATION = WIDTH / 2;
 
     /** Default value for the range maximum. */
     private static final double YMAX = 160;
@@ -80,7 +87,9 @@ public class EcgStripViewer extends JFrame implements IConstants
     private static final double XMAX = 30;
 
     /** Keeps the last-used path for the file open dialog. */
-    private String defaultPath = DEFAULT_DIR;
+    public String defaultOpenPath = DEFAULT_DIR;
+    /** Keeps the last-used path for the file save dialog. */
+    public String defaultSavePath = DEFAULT_DIR;
 
     /**
      * Determines how much of the 256-byte plot range is shown in the sub plot.
@@ -104,18 +113,20 @@ public class EcgStripViewer extends JFrame implements IConstants
     // User interface controls (Many do not need to be global)
     private Container contentPane = this.getContentPane();
     private JPanel listPanel = new JPanel();
+    private JPanel lowerPanel = new JPanel();
     private DefaultListModel listModel = new DefaultListModel();
     private JList list = new JList(listModel);
     private JScrollPane listScrollPane;
+    private JTextArea beatTextArea;
     private JPanel displayPanel = new JPanel();
     private ChartPanel chartPanel;
     private JPanel mainPanel = new JPanel();
     private JSplitPane mainPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-        displayPanel, listPanel);
+        displayPanel, lowerPanel);
     private JMenuBar menuBar;
 
     /** Array of Strips for the viewer. */
-    private Strip[] strips;
+    public Strip[] strips;
     /** The currently selected Strip. */
     private Strip curStrip;
 
@@ -130,6 +141,10 @@ public class EcgStripViewer extends JFrame implements IConstants
     private boolean showMarkers = false;
     /** Whether to show RSA data in the plot. */
     private boolean showRSA = true;
+    /** The fraction to use in determining the average baseline for RSA values. */
+    private double RSA_AVG_OUTLIER_FRACTION = .2;
+    /** Whether to get the RSA values from the default or the current data mode */
+    private boolean useDefaultAsRsaSource = true;
     /** The default window to use for the median filter. */
     private static final int MEDIAN_FILTER_WINDOW_DEFAULT = 50;
     /** The window to use for the median filter. */
@@ -139,27 +154,30 @@ public class EcgStripViewer extends JFrame implements IConstants
     /** The cutoff to use for the Butterworth low pass filter. */
     private double butterworthLowPassCutoff = BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT;
     /** The number of sub-plots to use. */
-    private int nSubPlots = 3;
+    private int nSubPlots = 1;
 
     /** List of dataModes to handle. */
-    private static final DataMode[] dataModeList = {DataMode.DEFAULT,
+    public static final DataMode[] dataModeList = {DataMode.DEFAULT,
         DataMode.MEDIAN_SUBTRACTED, DataMode.MEDIAN, DataMode.BUTTERWORTH,
         DataMode.BUTTERWORTH_LOW_PASS,
         DataMode.MEDIAN_SUBTRACTED_BUTTERWORTH_LOW_PASS,};
     /** The DataMode to use. */
-    private DataMode dataMode = DataMode.DEFAULT;
+    public DataMode dataMode = DataMode.DEFAULT;
 
     /**
      * DataMode represents the various modes for displaying the data on the
      * plot. Each DataMode has a name for use in menus and the like and a
      * Process which defines how the original data is processed in this mode.
      */
-    private static enum DataMode {
+    public static enum DataMode {
         DEFAULT("Default") {
             @Override
             double[] process(EcgStripViewer viewer, double[] data) {
-                // TODO Auto-generated method stub
-                return data;
+                double[] result = new double[data.length];
+                for(int i = 0; i < result.length; i++) {
+                    result[i] = data[i];
+                }
+                return result;
             }
         },
         MEDIAN_SUBTRACTED("Median Subtracted") {
@@ -193,13 +211,28 @@ public class EcgStripViewer extends JFrame implements IConstants
             }
         },
         MEDIAN_SUBTRACTED_BUTTERWORTH_LOW_PASS(
-            "Median Subtracted Butterworth Low Pass") {
+            "Median Subtracted Butterworth Low Pass Scaled") {
             @Override
             double[] process(EcgStripViewer viewer, double[] data) {
+                // Hard-coded. Get averages above mean + nSigma times sigma.
+                double nSigma = 1.0;
                 double[] temp = DataMode.MEDIAN_SUBTRACTED
                     .process(viewer, data);
-                return MathUtils.butterworthLowPass2Pole(SAMPLE_RATE,
+                // Get the average of the higher points
+                double avg1 = findPeakAverage(temp, nSigma);
+                temp = MathUtils.butterworthLowPass2Pole(SAMPLE_RATE,
                     viewer.butterworthLowPassCutoff, temp);
+                // Get the average of the higher points
+                double avg2 = findPeakAverage(temp, nSigma);
+                // Scale the results so the averages are the same
+                double factor = avg2 != 0 ? avg1 / avg2 : 1;
+                // // DEBUG
+                // System.out.println("avg1=" + avg1 + " avg2=" + avg2
+                // + " factor=" + factor);
+                for(int i = 0; i < temp.length; i++) {
+                    temp[i] = factor * temp[i];
+                }
+                return temp;
             }
         };
 
@@ -210,7 +243,8 @@ public class EcgStripViewer extends JFrame implements IConstants
         }
 
         /**
-         * Method that processes the data for this mode.
+         * Method that processes the data for this mode. It must return a new
+         * array and not change the input.
          * 
          * @param viewer The EcgStripViewer. Used to access instance variables.
          * @param data The input data.
@@ -232,7 +266,7 @@ public class EcgStripViewer extends JFrame implements IConstants
     void uiInit() {
         this.setLayout(new BorderLayout());
 
-        // Display panel
+        // Chart panel
         displayPanel.setLayout(new BorderLayout());
         displayPanel.setPreferredSize(new Dimension(WIDTH, HEIGHT / 2));
         createChart();
@@ -273,6 +307,23 @@ public class EcgStripViewer extends JFrame implements IConstants
             }
         });
 
+        // BeatPanel
+        JPanel beatPanel = new JPanel();
+        beatPanel.setLayout(new BorderLayout());
+
+        // Beat test area
+        beatTextArea = new JTextArea();
+        beatTextArea.setEditable(false);
+        beatTextArea.setColumns(40);
+        JScrollPane beatScrollPane = new JScrollPane(beatTextArea);
+        beatPanel.add(beatScrollPane, BorderLayout.CENTER);
+
+        // Lower split pane
+        JSplitPane lowerPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+            listPanel, beatPanel);
+        lowerPane.setContinuousLayout(true);
+        lowerPane.setDividerLocation(LOWER_PANE_DIVIDER_LOCATION);
+
         // Main split pane
         mainPane.setContinuousLayout(true);
         mainPane.setDividerLocation(MAIN_PANE_DIVIDER_LOCATION);
@@ -280,18 +331,15 @@ public class EcgStripViewer extends JFrame implements IConstants
             mainPane.setOneTouchExpandable(true);
         }
 
+        // Lower panel
+        lowerPanel.setLayout(new BorderLayout());
+        lowerPanel.add(lowerPane, BorderLayout.CENTER);
+
         // Main panel
         mainPanel.setLayout(new BorderLayout());
         mainPanel.add(mainPane, BorderLayout.CENTER);
 
         // Content pane
-        // For the drag behavior to work correctly, the tool bar must be in a
-        // container that uses the BorderLayout layout manager. The component
-        // that
-        // the tool bar affects is generally in the center of the container. The
-        // tool bar must be the only other component in the container, and it
-        // must
-        // not be in the center.
         contentPane.setLayout(new BorderLayout());
         contentPane.add(mainPanel, BorderLayout.CENTER);
     }
@@ -323,7 +371,8 @@ public class EcgStripViewer extends JFrame implements IConstants
         menuItem.setText("Save As...");
         menuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
-                saveAs();
+                SaveFileDialog dialog = new SaveFileDialog(EcgStripViewer.this);
+                dialog.setVisible(true);
             }
         });
         menu.add(menuItem);
@@ -351,6 +400,15 @@ public class EcgStripViewer extends JFrame implements IConstants
         menuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 showInfo();
+            }
+        });
+        menu.add(menuItem);
+
+        menuItem = new JMenuItem();
+        menuItem.setText("Heart Beat Info...");
+        menuItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ae) {
+                showHeartBeatInfo();
             }
         });
         menu.add(menuItem);
@@ -408,13 +466,14 @@ public class EcgStripViewer extends JFrame implements IConstants
      */
     private void open() {
         JFileChooser chooser = new JFileChooser();
-        if(defaultPath != null) {
-            chooser.setCurrentDirectory(new File(defaultPath));
+        if(defaultOpenPath != null) {
+            chooser.setCurrentDirectory(new File(defaultOpenPath));
         }
         int result = chooser.showOpenDialog(this);
         if(result == JFileChooser.APPROVE_OPTION) {
             // Save the selected path for next time
-            defaultPath = chooser.getSelectedFile().getParentFile().getPath();
+            defaultOpenPath = chooser.getSelectedFile().getParentFile()
+                .getPath();
             // Process the file
             File file = chooser.getSelectedFile();
             // Set the cursor in case it takes a long time
@@ -431,39 +490,11 @@ public class EcgStripViewer extends JFrame implements IConstants
     }
 
     /**
-     * Brings up a JFileChooser to save a file.
-     */
-    private void saveAs() {
-        JFileChooser chooser = new JFileChooser();
-        if(defaultPath != null) {
-            chooser.setCurrentDirectory(new File(defaultPath));
-        }
-        int result = chooser.showOpenDialog(this);
-        if(result == JFileChooser.APPROVE_OPTION) {
-            // Save the selected path for next time
-            defaultPath = chooser.getSelectedFile().getParentFile().getPath();
-            // Process the file
-            File file = chooser.getSelectedFile();
-            // Set the cursor in case it takes a long time
-            // This isn't working. The cursor apparently doesn't get set
-            // until after it is done.
-            Cursor oldCursor = getCursor();
-            try {
-                setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-                saveFile(file);
-            } finally {
-                setCursor(oldCursor);
-            }
-        }
-    }
-
-    /**
      * Loads a new file.
      * 
      * @param fileName
      */
     private void loadFile(final File file) {
-        // this.file = file;
         if(file == null) {
             Utils.errMsg("File is null");
             return;
@@ -514,28 +545,36 @@ public class EcgStripViewer extends JFrame implements IConstants
      * 
      * @param fileName
      */
-    private void saveFile(final File file) {
-        // this.file = file;
+    public void saveFile(File file, String id, List<Integer> stripList,
+        DataMode dataMode) {
         if(file == null) {
             Utils.errMsg("File is null");
             return;
         }
         try {
-            int nStrips = 1;
+            int nStrips = stripList.size();
             int totalSize = HEADER_LENGTH + nStrips * STRIP_LENGTH;
             byte[] data = new byte[totalSize];
+
+            // Do Header
             Header header = model.getHeader().clone();
             header.setNStrips(nStrips);
-            header.setId("2");
+            header.setId(id);
             byte[] headerData = header.getData();
-            byte[] stripData;
             int start = 0;
             int end = HEADER_LENGTH;
             for(int i = 0; i < end; i++) {
                 data[i] = headerData[i];
             }
-            for(int n = 0; n < nStrips; n++) {
-                stripData = model.getStrips()[n].getData();
+
+            // Do strips
+            double[] vals;
+            byte[] stripData;
+            for(int n : stripList) {
+                // stripData = model.getStrips()[n].getData();
+                vals = model.getStrips()[n].getDataAsBytes();
+                vals = dataMode.process(this, vals);
+                stripData = model.getStrips()[n].getConvertedBytes(vals);
                 start += end;
                 end = STRIP_LENGTH;
                 for(int i = 0; i < end; i++) {
@@ -634,6 +673,7 @@ public class EcgStripViewer extends JFrame implements IConstants
                     if(curStrip != null) {
                         clearPlot();
                         addStripToChart(curStrip);
+                        updateBeatText(curStrip);
                     }
                 }
             });
@@ -645,7 +685,7 @@ public class EcgStripViewer extends JFrame implements IConstants
         menu.add(menu1);
 
         item = new JMenuItem();
-        item.setText("Data Scale");
+        item.setText("Data Scale...");
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 double oldDataScale = dataScale;
@@ -679,7 +719,7 @@ public class EcgStripViewer extends JFrame implements IConstants
         menu1.add(item);
 
         item = new JMenuItem();
-        item.setText("Number of Sub-Plots");
+        item.setText("Number of Sub-Plots...");
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 int oldNSubPlots = nSubPlots;
@@ -712,7 +752,7 @@ public class EcgStripViewer extends JFrame implements IConstants
         menu1.add(item);
 
         item = new JMenuItem();
-        item.setText("Median Filter Window");
+        item.setText("Median Filter Window...");
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 String value = (String)JOptionPane.showInputDialog(null,
@@ -748,7 +788,7 @@ public class EcgStripViewer extends JFrame implements IConstants
         menu1.add(item);
 
         item = new JMenuItem();
-        item.setText("Butterworth Low Pass Cutoff");
+        item.setText("Butterworth Low Pass Cutoff...");
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 String value = (String)JOptionPane.showInputDialog(null,
@@ -783,6 +823,42 @@ public class EcgStripViewer extends JFrame implements IConstants
             }
         });
         menu1.add(item);
+
+        JMenu menu2 = new JMenu("RSA");
+        menu1.add(menu2);
+
+        bgroup = new ButtonGroup();
+
+        // Select RSA source
+        radioButtonItem = new JRadioButtonMenuItem();
+        radioButtonItem.setText("From Default");
+        radioButtonItem.setSelected(true);
+        radioButtonItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ae) {
+                useDefaultAsRsaSource = true;
+                if(curStrip != null) {
+                    clearPlot();
+                    addStripToChart(curStrip);
+                }
+            }
+        });
+        menu2.add(radioButtonItem);
+        bgroup.add(radioButtonItem);
+
+        radioButtonItem = new JRadioButtonMenuItem();
+        radioButtonItem.setText("From Data Plotted");
+        radioButtonItem.setSelected(true);
+        radioButtonItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ae) {
+                useDefaultAsRsaSource = false;
+                if(curStrip != null) {
+                    clearPlot();
+                    addStripToChart(curStrip);
+                }
+            }
+        });
+        menu2.add(radioButtonItem);
+        bgroup.add(radioButtonItem);
 
         item = new JMenuItem();
         item.setText("Reset");
@@ -851,17 +927,20 @@ public class EcgStripViewer extends JFrame implements IConstants
      */
     // TODO
     private void addStripToChart(Strip strip) {
-        double[] stripData, data;
+        double[] stripData;
         try {
             stripData = strip.getDataAsBytes();
             int nDataPoints = stripData.length;
-            // Work with a copy of the data so we don't modify the original
-            data = new double[nDataPoints];
-            for(int i = 0; i < nDataPoints; i++) {
-                data[i] = stripData[i];
-            }
-            // Process according to the dataMode
-            data = dataMode.process(this, data);
+            // // Work with a copy of the data so we don't modify the original
+            // double[] data = new double[nDataPoints];
+            // for(int i = 0; i < nDataPoints; i++) {
+            // data[i] = stripData[i];
+            // }
+            // // Process according to the dataMode
+            // data = dataMode.process(this, data);
+
+            // process() should return a new array
+            double[] data = dataMode.process(this, stripData);
 
             // DEBUG
             boolean debug = false;
@@ -923,9 +1002,16 @@ public class EcgStripViewer extends JFrame implements IConstants
 
             // Add RSA values
             if(showRSA) {
-                if(strip.getPeakIndices().length > 2) {
+                int[] peakIndices;
+                if(useDefaultAsRsaSource) {
+                    peakIndices = strip.getPeakIndices();
+                } else {
+                    peakIndices = Strip.getPeakIndices(data);
+                }
+                if(peakIndices.length > 2) {
                     // Get the peak index values
-                    double[] rsaVals = strip.getPeakIndicesArray();
+                    double[] rsaVals = Strip.getRsaArray(peakIndices, data,
+                        RSA_AVG_OUTLIER_FRACTION);
                     // Scale them
                     double subPlotHeight = .25 * totalHeight / nSubPlots;
                     double secMax = .1;
@@ -1017,6 +1103,52 @@ public class EcgStripViewer extends JFrame implements IConstants
     }
 
     /**
+     * Finds the average of points that are above the mean + nSigma * sigma of
+     * the given array, where mean is the full mean, and sigma is the full
+     * standard deviation.
+     * 
+     * @param array The array to use.
+     * @param nSigma The multiplier of the standard deviation to use.
+     * @return
+     */
+    public static double findPeakAverage(double[] array, double nSigma) {
+        int nPoints = array.length;
+        if(nPoints < 1) return Double.NaN;
+
+        // Get the mean and standard deviation
+        // double max = -Double.MAX_VALUE;
+        // double min = Double.MAX_VALUE;
+        double sum = 0.0;
+        double sumsq = 0.0;
+        for(int i = 0; i < nPoints; i++) {
+            double val = array[i];
+            // if(val > max) {
+            // max = val;
+            // }
+            // if(val < min) {
+            // min = val;
+            // }
+            sum += val;
+            sumsq += val * val;
+        }
+        double mean = sum / nPoints;
+        double sigma = (sumsq - nPoints * mean * mean) / (nPoints - 1);
+        sigma = Math.sqrt(sigma);
+
+        // Redo the mean using only points above the mean + nSigma * sigma
+        sum = 0;
+        int count = 0;
+        for(int i = 0; i < nPoints; i++) {
+            double val = array[i];
+            if(val > mean + nSigma * sigma) {
+                sum += val;
+                count++;
+            }
+        }
+        return count > 0 ? sum / count : Double.NaN;
+    }
+
+    /**
      * Handler for the list. Toggles the checked state.
      * 
      * @param ev
@@ -1027,11 +1159,11 @@ public class EcgStripViewer extends JFrame implements IConstants
         if(strip == null) {
             return;
         }
-        if(strip == null) return;
         list.clearSelection();
         clearPlot();
         addStripToChart(strip);
         curStrip = strip;
+        updateBeatText(strip);
     }
 
     /**
@@ -1040,9 +1172,184 @@ public class EcgStripViewer extends JFrame implements IConstants
     private void showInfo() {
         if(model != null && model.getHeader() != null) {
             String info = model.getHeader().getInfo();
-            JOptionPane.showMessageDialog(null, info, "Patient Information",
-                JOptionPane.PLAIN_MESSAGE);
+            // JOptionPane.showMessageDialog(null, info, "Patient Information",
+            // JOptionPane.PLAIN_MESSAGE);
+            scrolledTextMsg(null, info, "Patient Info", 600, 400);
         }
+    }
+
+    /**
+     * Updates the beat information in the beat text area.
+     * 
+     * @param strip
+     */
+    private void updateBeatText(Strip strip) {
+        String info = "Heartbeat Information" + LS;
+        info += strip.getStringDate() + " " + strip.getStringTime(false) + " "
+            + strip.getHeartRate() + " bpm" + " " + strip.getDiagnosisString()
+            + LS + LS;
+        info += "Data Mode is " + dataMode.name + LS;
+        info += getHeartBeatInfo(dataMode);
+        beatTextArea.setText(info);
+        beatTextArea.setCaretPosition(0);
+    }
+
+    /**
+     * Shows heart-beat information in a dialog.
+     */
+    private void showHeartBeatInfo() {
+        String info = "";
+        if(curStrip != null) {
+            info += curStrip.getStringDate() + " "
+                + curStrip.getStringTime(false) + " " + curStrip.getHeartRate()
+                + " bpm" + " " + curStrip.getDiagnosisString() + LS + LS;
+        } else {
+            info = "Error getting current strip";
+            scrolledTextMsg(null, info, "Heart Beat Info", 600, 400);
+        }
+
+        // Default
+        info += "Default" + LS;
+        info += getHeartBeatInfo(DataMode.DEFAULT);
+        if(dataMode == DataMode.DEFAULT) {
+            scrolledTextMsg(null, info, "Heart Beat Info", 600, 400);
+            return;
+        }
+
+        // Current data mode
+        info += LS;
+        info += dataMode.name + LS;
+        info += getHeartBeatInfo(dataMode);
+        scrolledTextMsg(null, info, "Heart Beat Info", 600, 400);
+    }
+
+    /**
+     * Gets information about the heartbeats for the given data mode.
+     * 
+     * @param dataMode
+     * @return
+     */
+    private String getHeartBeatInfo(DataMode dataMode) {
+        String info = "";
+        if(curStrip == null) {
+            info = "  There is no strip";
+            return info;
+        }
+        if(model == null || model.getHeader() == null) {
+            info = "  There is no strip model or it is invalid";
+            return info;
+        }
+
+        double[] stripData = null;
+        double[] vals = null;
+        double[] array = null;
+        double max, min, mean, sigma, sum, sumsq, val, rsaBaseLine;
+        int maxIndex, minIndex;
+
+        stripData = curStrip.getDataAsBytes();
+        vals = dataMode.process(this, stripData);
+        int[] peakIndices = Strip.getPeakIndices(vals);
+        int nPeaks = peakIndices.length;
+        int nIntervals = nPeaks - 1;
+
+        // Get the statistics
+        if(nPeaks == 0) {
+            info += "  No R peaks found" + LS;
+        } else if(nPeaks == 1) {
+            info += "  Only one R peak found, not enough to calculate intervals"
+                + LS;
+        } else {
+            rsaBaseLine = Strip.getAveragePeakInterval(peakIndices,
+                RSA_AVG_OUTLIER_FRACTION);
+            array = new double[nPeaks];
+            for(int i = 1; i < nPeaks; i++) {
+                array[i] = 60. / INDEX_TO_SEC
+                    / (peakIndices[i] - peakIndices[i - 1]);
+            }
+            maxIndex = -1;
+            minIndex = -1;
+            max = -Double.MAX_VALUE;
+            min = Double.MAX_VALUE;
+            sum = 0.0;
+            sumsq = 0.0;
+            for(int i = 1; i < nPeaks; i++) {
+                val = array[i];
+                if(val > max) {
+                    max = val;
+                    maxIndex = i;
+                }
+                if(val < min) {
+                    min = val;
+                    minIndex = i;
+                }
+                sum += val;
+                sumsq += val * val;
+            }
+            mean = sum / nIntervals;
+            sigma = (sumsq - nIntervals * mean * mean) / (nIntervals - 1);
+            sigma = Math.sqrt(sigma);
+            info += "  Number of R peaks: " + nPeaks + LS;
+            info += "  Number of intervals: " + nIntervals + LS;
+            info += "  Mean BPM: " + String.format("%.2f", mean) + LS;
+            info += "  BPM Standard Deviation: " + String.format("%.2f", sigma)
+                + LS;
+            info += String.format("  Max BPM: %.2f @ %.2f sec", max,
+                peakIndices[maxIndex] * INDEX_TO_SEC) + LS;
+            info += String.format("  Min BPM: %.2f @ %.2f sec", min,
+                peakIndices[minIndex] * INDEX_TO_SEC) + LS;
+            if(true) {
+                info += String.format("  Min Interval: %.2f sec @ %.2f sec",
+                    60. / max, peakIndices[maxIndex] * INDEX_TO_SEC) + LS;
+                info += String.format("  Max Interval: %.2f sec @ %.2f sec",
+                    60. / min, peakIndices[minIndex] * INDEX_TO_SEC) + LS;
+            }
+            info += "  RSA Baseline: "
+                + String.format("%.2f BPM = %.2f sec", 60. / INDEX_TO_SEC
+                    / rsaBaseLine, rsaBaseLine * INDEX_TO_SEC) + LS;
+        }
+        return info;
+    }
+
+    /**
+     * Displays a scrolled text dialog with the given message.
+     * 
+     * @param message
+     */
+    public static void scrolledTextMsg(Frame parent, String message,
+        String title, int width, int height) {
+        final JDialog dialog = new JDialog(parent);
+
+        // Message
+        JPanel jPanel = new JPanel();
+        JTextArea textArea = new JTextArea(message);
+        textArea.setEditable(false);
+        textArea.setCaretPosition(0);
+
+        JScrollPane scrollPane = new JScrollPane(textArea);
+        jPanel.add(scrollPane, BorderLayout.CENTER);
+        dialog.getContentPane().add(scrollPane);
+
+        // Close button
+        jPanel = new JPanel();
+        JButton button = new JButton("OK");
+        jPanel.add(button);
+        button.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                dialog.setVisible(false);
+                dialog.dispose();
+            }
+
+        });
+        dialog.getContentPane().add(jPanel, BorderLayout.SOUTH);
+
+        // Settings
+        dialog.setTitle(title);
+        dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dialog.setSize(width, height);
+        // Has to be done after set size
+        dialog.setLocationRelativeTo(parent);
+        dialog.setVisible(true);
     }
 
     /**

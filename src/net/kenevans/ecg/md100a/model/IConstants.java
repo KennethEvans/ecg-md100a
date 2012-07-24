@@ -23,8 +23,10 @@ public interface IConstants
     // public static final String FILE_NAME = "2012-06-28-AllFromDevice.cEcg";
     // public static final String FILE_NAME = "2012-07-09-AllFromDevice.cEcg";
     // public static final String FILE_NAME = "2012-07-13-AllFromDevice.cEcg";
-    public static final String FILE_NAME = "2012-07-17-AllFromDevice.cEcg";
+    // public static final String FILE_NAME = "2012-07-17-AllFromDevice.cEcg";
+    public static final String FILE_NAME = "2012-07-20-AllFromDevice.cEcg";
     public static final String FILE_PATH = DEFAULT_DIR + "/" + FILE_NAME;
+    public static final String DEFAULT_SAVE_FILE_NAME = "SavedFile.cEcg";
 
     // A file consists of a header and 1 or more strips. The strips consist of a
     // header and data. The data are broken up into segments. Each segment has
@@ -56,5 +58,12 @@ public interface IConstants
      * to get to the start of the data.
      */
     public static int STRIP_DATA_START = 26;
+
+    /** The maximum patient ID. */
+    public final long MAX_PATIENT_ID = 999999999999999L;
+
+    /** Conversion from index to seconds. */
+    public static final double INDEX_TO_SEC = (double)STRIP_SAMPLE_TIME
+        / STRIP_N_DATA_VALS;
 
 }

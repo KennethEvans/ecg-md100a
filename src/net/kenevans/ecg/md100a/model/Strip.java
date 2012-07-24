@@ -195,6 +195,49 @@ public class Strip implements IConstants
         return vals;
     }
 
+    public byte[] getConvertedBytes(double[] vals) {
+        byte[] bytes = new byte[STRIP_LENGTH];
+        // Duplicate the header
+        for(int i = 0; i < STRIP_DATA_START; i++) {
+            bytes[i] = data[i];
+        }
+
+        int nextIndex = STRIP_DATA_START;
+        int nextVal = 0;
+        short val = 0;
+        for(int seg = 0; seg < STRIP_N_DATA_SEGMENTS; seg++) {
+            for(int i = 0; i < SEGMENT_LENGTH; i++) {
+                if(i == 0) {
+                    val = (short)Math.round(vals[nextVal] + 512);
+                    bytes[nextIndex++] = (byte)((val >> 8) & 0xff);
+                } else if(i == 1) {
+                    bytes[nextIndex++] = (byte)(val & 0xff);
+                    nextVal++;
+                } else {
+                    val = (short)(Math.round(vals[nextVal]));
+                    val -= (short)(Math.round(vals[nextVal - 1]));
+                    nextVal++;
+                    // This logic is necessary because Java's byte is unsigned
+                    if(val >= 0) {
+                        bytes[nextIndex++] = (byte)(val & 0xff);
+                    } else {
+                        bytes[nextIndex++] = (byte)((-(val + 128)) & 0xff);
+                    }
+                }
+                // // DEBUG
+                // if(seg == 0 && i < 5) {
+                // byte bVal = bytes[nextIndex - 1];
+                // System.out.println("getConvertedBytes "
+                // + String.format(
+                // "%d | val: %d %4x | 128-val: %d %4x | -(val + 128): %d %4x | bVal: %d %2x",
+                // i, val, val, 128 - val, 128 - val, -(val + 128), -(val +
+                // 128), bVal, bVal));
+                // }
+            }
+        }
+        return bytes;
+    }
+
     public boolean readSegmentBytes(LittleEndianDataInputStream dis,
         double[] vals, int startIndex) throws IOException {
         int j = startIndex;
@@ -225,11 +268,359 @@ public class Strip implements IConstants
             // System.out.println("i=" + i + " j=" + j + " sec=" + (j * .004)
             // + " bval=" + bval + " vals[j]=" + vals[j]);
             // }
+
+            // // DEBUG
+            // if(startIndex == 0 && i < 5) {
+            // System.out.println("readSegmentBytes " + i + ": " + vals[j]
+            // + " " + bval + " " + String.format("%2x", bval));
+            // }
             if(i != 0) {
                 j++;
             }
         }
         return true;
+    }
+
+    /**
+     * Finds the peak indices for the array of values in this instance minus a
+     * median filter of the values. Stores the result the first time it is
+     * called and uses that value afterward.
+     * 
+     * @return
+     */
+    public int[] getPeakIndices() {
+        // Calculate the first time, then use the stored values
+        if(this.peakIndices != null) {
+            return this.peakIndices;
+        }
+        this.peakIndices = getPeakIndices(this.vals);
+        return this.peakIndices;
+    }
+
+    /**
+     * Finds the peak indices for the given array of values minus a median
+     * filter of the values.
+     * 
+     * @param vals The array of values to use.
+     * @return
+     */
+    public static int[] getPeakIndices(double[] vals) {
+        int window = 50;
+        if(vals == null) {
+            return null;
+        }
+        int nVals = vals.length;
+        if(nVals == 0) {
+            return new int[0];
+        }
+
+        // Look for the peaks in the vals minus a median filter of the vals
+        // The median filter eliminates noise and subtracting eliminates
+        // baseline variation
+        double[] wVals = MathUtils.medianFilter(vals, window);
+        for(int i = 0; i < nVals; i++) {
+            wVals[i] = vals[i] - wVals[i];
+        }
+
+        List<Integer> indicesList = new ArrayList<Integer>();
+        for(int i = 0; i < nVals; i++) {
+            if(isPeak(wVals, i)) {
+                indicesList.add(new Integer(i));
+            }
+        }
+        int nIndices = indicesList.size();
+        int[] peakIndices = new int[nIndices];
+        int i = 0;
+        for(Integer integer : indicesList) {
+            // DEBUG
+            // System.out.println(integer);
+            peakIndices[i++] = integer;
+        }
+        return peakIndices;
+    }
+
+    /**
+     * Determines if this index is an R peak.
+     * 
+     * @param fVals The array to use for finding peaks. Typically this array
+     *            will have been processed first and be normalized so zero
+     *            corresponds to 0 mV.
+     * @param index The index to check.
+     * @return
+     */
+    public static boolean isPeak(double[] fVals, int index) {
+        // DEBUG
+        // if(index == 600) {
+        // System.out.println("Stop here");
+        // }
+        // Hard-coded flag to check if there are adjacent negative values
+        boolean checkNegative = true;
+        // Hard-coded threshold (value must be greater than this)
+        double threshold = 25;
+        // Must be above threshold
+        if(fVals[index] < threshold) {
+            return false;
+        }
+        // Cannot be preceded by the same value
+        // In the case of two equal values at the top, take the first
+        if(index > 0 && fVals[index - 1] == fVals[index]) {
+            return false;
+        }
+        // Must be greater than surrounding values
+        int delta = 10;
+        int len = fVals.length;
+
+        int iMin = index - delta;
+        if(iMin < 0) {
+            iMin = 0;
+        }
+        int iMax = index + delta;
+        if(iMax > len) {
+            iMax = len;
+        }
+        for(int i = iMin; i < iMax; i++) {
+            if(fVals[i] > fVals[index]) {
+                return false;
+            }
+        }
+        if(!checkNegative) {
+            return true;
+        }
+        // Must be preceded by a negative value within minCheck indices
+        boolean possible = false;
+        int minCheck = 10;
+        iMin = index - minCheck;
+        if(iMin < 0) {
+            // Are not enough indices to check
+            possible = true;
+        } else {
+            for(int i = iMin; i < index; i++) {
+                if(fVals[i] < 0) {
+                    possible = true;
+                    break;
+                }
+            }
+        }
+        if(!possible) {
+            return false;
+        }
+        // It has passed the check for being preceded by a negative value
+        // Must be followed by a negative value within minCheck indices
+        iMax = index + minCheck;
+        if(iMax > len) {
+            // Are not enough indices to check
+            return true;
+        }
+        for(int i = index + 1; i < iMax; i++) {
+            if(fVals[i] < 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Gets the average value at the peaks eliminating outliers that fall
+     * outside (1 +/- the fractionOfAverage) of the true average. Equivalent to
+     * getAveragePeakValue(fractionOfAverage, this.vals).
+     * 
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers.
+     * @param vals Array of values to use.
+     * @return
+     * @see #getAveragePeakValue(double fractionOfAverage, double[] vals)
+     */
+    public double getAveragePeakValue(double fractionOfAverage) {
+        return getAveragePeakValue(this.vals, fractionOfAverage);
+    }
+
+    /**
+     * Gets the average value of the given array at the peaks eliminating
+     * outliers that fall outside (1 +/- the fractionOfAverage) of the true
+     * average.
+     * 
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers.
+     * @param vals Array of values to use.
+     * @return
+     */
+    public double getAveragePeakValue(double[] vals, double fractionOfAverage) {
+        if(peakIndices == null) {
+            getPeakIndices();
+        }
+        int nPeaks = peakIndices.length;
+        // DEBUG
+        // for(int i = 0; i < peakIndices.length; i++) {
+        // System.out.println(i + " " + peakIndices[i]);
+        // }
+        // Find the average
+        double sum = 0;
+        int count = 0;
+        for(int i = 0; i < nPeaks; i++) {
+            sum += vals[i];
+            count++;
+        }
+        double avg = count > 0 ? sum / count : 0;
+
+        // Redo the average eliminating outliers
+        sum = 0;
+        count = 0;
+        double val;
+        for(int i = 1; i < nPeaks; i++) {
+            val = vals[i];
+            if(val < (1 + fractionOfAverage) * avg
+                && val > (1 - fractionOfAverage) * avg) {
+                sum += val;
+                count++;
+            }
+        }
+        avg = count > 0 ? sum / count : 0;
+        return avg;
+    }
+
+    /**
+     * Gets the average interval between peaks eliminating outliers that fall
+     * outside (1 +/- the fractionOfAverage) of the true average.
+     * 
+     * @param peakIndices The array of peak indices to use.
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers.
+     * @return
+     */
+    public static double getAveragePeakInterval(int[] peakIndices,
+        double fractionOfAverage) {
+        int nPeaks = peakIndices.length;
+        // DEBUG
+        // for(int i = 0; i < peakIndices.length; i++) {
+        // System.out.println(i + " " + peakIndices[i]);
+        // }
+        // Find the average skipping the first point
+        double sum = 0;
+        int count = 0;
+        double delta;
+        for(int i = 1; i < nPeaks; i++) {
+            delta = peakIndices[i] - peakIndices[i - 1];
+            sum += delta;
+            count++;
+        }
+        double avg = count > 0 ? sum / count : 0;
+
+        // Redo the average eliminating outliers
+        sum = 0;
+        count = 0;
+        for(int i = 1; i < nPeaks; i++) {
+            delta = peakIndices[i] - peakIndices[i - 1];
+            if(delta < (1 + fractionOfAverage) * avg
+                && delta > (1 - fractionOfAverage) * avg) {
+                sum += delta;
+                count++;
+            }
+        }
+        avg = count > 0 ? sum / count : 0;
+        return avg;
+    }
+
+    /**
+     * Calculates an array of values of the time between peaks at the peaks in
+     * this instance. The array is a step function. The steps represent the
+     * interval between the last peak and the one before it. The steps start at
+     * the second peak and NEGATIVE_INFINITY is used for times before that. The
+     * values are the difference from the average. The average is calculated not
+     * including outliers in the time difference.<br>
+     * <br>
+     * 
+     * This version uses the instance values for the peak indices and the
+     * values.
+     * 
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers as used in getAveragePeakInterval().
+     * @return
+     * @see #getAveragePeakInterval
+     */
+    public double[] getRsaArray(double fractionOfAverage) {
+        if(this.peakIndices == null) {
+            getPeakIndices();
+        }
+        return getRsaArray(this.peakIndices, this.vals, fractionOfAverage);
+    }
+
+    /**
+     * Calculates an array of values of the time between peaks at the peaks in
+     * this instance. The array is a step function. The steps represent the
+     * interval between the last peak and the one before it. The steps start at
+     * the second peak and NEGATIVE_INFINITY is used for times before that. The
+     * values are the difference from the average. The average is calculated not
+     * including outliers in the time difference.<br>
+     * <br>
+     * 
+     * This version uses the given vals to determine the peak indices.
+     * 
+     * @param vals The array of vals to use.
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers as used in getAveragePeakInterval().
+     * @return
+     * @see #getAveragePeakInterval
+     */
+    public static double[] getRsaArray(double[] vals, double fractionOfAverage) {
+        return getRsaArray(getPeakIndices(vals), vals, fractionOfAverage);
+    }
+
+    /**
+     * Calculates an array of values of the time between peaks at the peaks in
+     * this instance. The array is a step function. The steps represent the
+     * interval between the last peak and the one before it. The steps start at
+     * the second peak and NEGATIVE_INFINITY is used for times before that. The
+     * values are the difference from the average. The average is calculated not
+     * including outliers in the time difference.<br>
+     * <br>
+     * 
+     * This is a generalized version and probably should not be called directly.
+     * 
+     * @param peakIndices The array of peak indices to use.
+     * @param vals The array of vals to use.
+     * @param fractionOfAverage The fraction of the original average to use in
+     *            determining outliers as used in getAveragePeakInterval().
+     * @return
+     * @see #getAveragePeakInterval
+     */
+    public static double[] getRsaArray(int[] peakIndices, double[] vals,
+        double fractionOfAverage) {
+        int nPeaks = peakIndices.length;
+        double avg = getAveragePeakInterval(peakIndices, fractionOfAverage);
+
+        // Calculate the array
+        double lastPeakVal = Double.NEGATIVE_INFINITY;
+        int nDataPoints = vals.length;
+        int nextPeak = 0;
+        double[] rsaVals = new double[nDataPoints];
+        for(int i = 0; i < rsaVals.length; i++) {
+            if(i == peakIndices[nextPeak]) {
+                // Don't plot anything until the second peak
+                if(nextPeak >= 1 && nextPeak < nPeaks) {
+                    // Difference from average in seconds
+                    lastPeakVal = .004 * (peakIndices[nextPeak]
+                        - peakIndices[nextPeak - 1] - avg);
+                }
+                if(nextPeak < nPeaks - 1) {
+                    nextPeak++;
+                }
+            }
+            if(lastPeakVal == Double.NEGATIVE_INFINITY) {
+                rsaVals[i] = Double.NaN;
+            } else {
+                rsaVals[i] = lastPeakVal;
+            }
+        }
+
+        // DEBUG
+        // System.out.println(LS + "Peak Indices for Strip " + getStringDate()
+        // + " " + getStringTime(false));
+        // for(int i = 0; i < peakIndices.length; i++) {
+        // System.out.printf("%2d %4d %5.2f %9.4f \n", i, peakIndices[i],
+        // getTimeForIndex(peakIndices[i]), rsaVals[peakIndices[i]]);
+        // }
+
+        return rsaVals;
     }
 
     /**
@@ -357,193 +748,6 @@ public class Strip implements IConstants
         // Only set the internal values if we got to here.
         this.vals = vals;
         return vals;
-    }
-
-    public int[] getPeakIndices() {
-        int window = 50;
-        // Calculate the first time, then use the stored values
-        if(this.peakIndices != null) {
-            return this.peakIndices;
-        }
-        double[] vals = getDataAsBytes();
-        if(vals == null) {
-            return null;
-        }
-        int nVals = vals.length;
-        if(nVals == 0) {
-            return new int[0];
-        }
-
-        // Look for the peaks in the vals minus a median filter of the vals
-        // The median filter eliminates noise and subtracting eliminates
-        // baseline variation
-        double[] wVals = MathUtils.medianFilter(vals, window);
-        for(int i = 0; i < nVals; i++) {
-            wVals[i] = vals[i] - wVals[i];
-        }
-
-        List<Integer> indicesList = new ArrayList<Integer>();
-        for(int i = 0; i < nVals; i++) {
-            if(isPeak(wVals, i)) {
-                indicesList.add(new Integer(i));
-            }
-        }
-        int nIndices = indicesList.size();
-        this.peakIndices = new int[nIndices];
-        int i = 0;
-        for(Integer integer : indicesList) {
-            // DEBUG
-            // System.out.println(integer);
-            peakIndices[i++] = integer;
-        }
-        return this.peakIndices;
-    }
-
-    /**
-     * Determines if this index is an R peak.
-     * 
-     * @param fVals The array to use for finding peaks. Typically this array
-     *            will have been processed first and be normalized so zero
-     *            corresponds to 0 mV.
-     * @param index The index to check.
-     * @return
-     */
-    public boolean isPeak(double[] fVals, int index) {
-        // DEBUG
-        // if(index == 600) {
-        // System.out.println("Stop here");
-        // }
-        // Hard-coded flag to check if there are adjacent negative values
-        boolean checkNegative = true;
-        // Hard-coded threshold (value must be greater than this)
-        double threshold = 25;
-        // Must be above threshold
-        if(fVals[index] < threshold) {
-            return false;
-        }
-        // Cannot be preceded by the same value
-        // In the case of two equal values at the top, take the first
-        if(index > 0 && fVals[index - 1] == fVals[index]) {
-            return false;
-        }
-        // Must be greater than surrounding values
-        int delta = 10;
-        int len = fVals.length;
-
-        int iMin = index - delta;
-        if(iMin < 0) {
-            iMin = 0;
-        }
-        int iMax = index + delta;
-        if(iMax > len) {
-            iMax = len;
-        }
-        for(int i = iMin; i < iMax; i++) {
-            if(fVals[i] > fVals[index]) {
-                return false;
-            }
-        }
-        if(!checkNegative) {
-            return true;
-        }
-        // Must be preceded by a negative value within minCheck indices
-        boolean possible = false;
-        int minCheck = 10;
-        iMin = index - minCheck;
-        if(iMin < 0) {
-            // Are not enough indices to check
-            possible = true;
-        } else {
-            for(int i = iMin; i < index; i++) {
-                if(fVals[i] < 0) {
-                    possible = true;
-                    break;
-                }
-            }
-        }
-        if(!possible) {
-            return false;
-        }
-        // It has passed the check for being preceded by a negative value
-        // Must be followed by a negative value within minCheck indices
-        iMax = index + minCheck;
-        if(iMax > len) {
-            // Are not enough indices to check
-            return true;
-        }
-        for(int i = index + 1; i < iMax; i++) {
-            if(fVals[i] < 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public double[] getPeakIndicesArray() {
-        if(peakIndices == null) {
-            getPeakIndices();
-        }
-        int nPeaks = peakIndices.length;
-        // DEBUG
-        // for(int i = 0; i < peakIndices.length; i++) {
-        // System.out.println(i + " " + peakIndices[i]);
-        // }
-        // Find the average skipping the first point
-        double sum = 0;
-        int count = 0;
-        double delta;
-        for(int i = 1; i < nPeaks; i++) {
-            delta = peakIndices[i] - peakIndices[i - 1];
-            sum += delta;
-            count++;
-        }
-        double avg = count > 0 ? sum / count : 0;
-
-        // Redo the average eliminating outliers
-        sum = 0;
-        count = 0;
-        for(int i = 1; i < nPeaks; i++) {
-            delta = peakIndices[i] - peakIndices[i - 1];
-            if(delta < 1.2 * avg && delta > .8 * avg) {
-                sum += delta;
-                count++;
-            }
-        }
-        avg = count > 0 ? sum / count : 0;
-
-        // Calculate the array
-        double lastPeakVal = Double.NEGATIVE_INFINITY;
-        int nDataPoints = vals.length;
-        int nextPeak = 0;
-        double[] rsaVals = new double[nDataPoints];
-        for(int i = 0; i < rsaVals.length; i++) {
-            if(i == peakIndices[nextPeak]) {
-                // Don't plot anything until the second peak
-                if(nextPeak >= 1 && nextPeak < nPeaks) {
-                    // Difference from average in seconds
-                    lastPeakVal = .004 * (peakIndices[nextPeak]
-                        - peakIndices[nextPeak - 1] - avg);
-                }
-                if(nextPeak < nPeaks - 1) {
-                    nextPeak++;
-                }
-            }
-            if(lastPeakVal == Double.NEGATIVE_INFINITY) {
-                rsaVals[i] = Double.NaN;
-            } else {
-                rsaVals[i] = lastPeakVal;
-            }
-        }
-
-        // DEBUG
-        // System.out.println(LS + "Peak Indices for Strip " + getStringDate()
-        // + " " + getStringTime(false));
-        // for(int i = 0; i < peakIndices.length; i++) {
-        // System.out.printf("%2d %4d %5.2f %9.4f \n", i, peakIndices[i],
-        // getTimeForIndex(peakIndices[i]), rsaVals[peakIndices[i]]);
-        // }
-
-        return rsaVals;
     }
 
     /**
@@ -941,7 +1145,7 @@ public class Strip implements IConstants
         }
     }
 
-    public void printTestTable() {
+    public static void printTestTable() {
         byte val;
         int intVal;
         int intVal2;
@@ -966,7 +1170,7 @@ public class Strip implements IConstants
 
     }
 
-    public void printTestTable1() {
+    public static void printTestTable1() {
         byte val;
         int intVal;
         int intVal2;
