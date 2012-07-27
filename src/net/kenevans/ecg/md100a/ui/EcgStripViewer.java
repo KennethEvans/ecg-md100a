@@ -1012,12 +1012,22 @@ public class EcgStripViewer extends JFrame implements IConstants
                     // Get the peak index values
                     double[] rsaVals = Strip.getRsaArray(peakIndices, data,
                         RSA_AVG_OUTLIER_FRACTION);
+                    // DEBUG
+                    // for(int i = 0; i < rsaVals.length; i++) {
+                    // rsaVals[i] = (i/250);
+                    // rsaVals[i] *= .02;
+                    // }
                     // Scale them
                     double subPlotHeight = .25 * totalHeight / nSubPlots;
-                    double secMax = .1;
+                    System.out.println(subPlotHeight);
+                    // Determine scale factor to get a specified number of sec
+                    // per tick mark
+                    double secPerTick = .05;
+                    double unitsPerTick = 50;
+                    double rsaScale = unitsPerTick / secPerTick;
                     for(int i = 0; i < rsaVals.length; i++) {
                         // Scale
-                        rsaVals[i] *= subPlotHeight / secMax;
+                        rsaVals[i] *= rsaScale;
                         // lastPeakVal = 0;
                         // lastPeakVal = nextPeak;
                     }

@@ -587,6 +587,11 @@ public class Strip implements IConstants
         double fractionOfAverage) {
         int nPeaks = peakIndices.length;
         double avg = getAveragePeakInterval(peakIndices, fractionOfAverage);
+        // DEBUG
+        // for(int i = 1; i < nPeaks; i++) {
+        // System.out.println(i + " " + (peakIndices[i] - peakIndices[i - 1])
+        // * INDEX_TO_SEC);
+        // }
 
         // Calculate the array
         double lastPeakVal = Double.NEGATIVE_INFINITY;
@@ -598,8 +603,8 @@ public class Strip implements IConstants
                 // Don't plot anything until the second peak
                 if(nextPeak >= 1 && nextPeak < nPeaks) {
                     // Difference from average in seconds
-                    lastPeakVal = .004 * (peakIndices[nextPeak]
-                        - peakIndices[nextPeak - 1] - avg);
+                    lastPeakVal = INDEX_TO_SEC
+                        * (peakIndices[nextPeak] - peakIndices[nextPeak - 1] - avg);
                 }
                 if(nextPeak < nPeaks - 1) {
                     nextPeak++;
