@@ -7,6 +7,7 @@ import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Frame;
+import java.awt.Image;
 import java.awt.Paint;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -39,6 +40,7 @@ import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 
 import net.kenevans.core.utils.AboutBoxPanel;
+import net.kenevans.core.utils.ImageUtils;
 import net.kenevans.core.utils.Utils;
 import net.kenevans.ecg.md100a.model.EcgFileModel;
 import net.kenevans.ecg.md100a.model.Header;
@@ -448,6 +450,10 @@ public class EcgStripViewer extends JFrame implements IConstants
             this.setTitle(title);
             this.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
             // frame.setLocationRelativeTo(null);
+
+            // Set the icon
+            ImageUtils.setIconImageFromResource(this,
+                "/resources/HeartMonitor.36x36.png");
 
             // Has to be done here. The menus are not part of the JPanel.
             initMenus();
