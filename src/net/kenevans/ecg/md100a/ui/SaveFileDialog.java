@@ -326,11 +326,11 @@ public class SaveFileDialog extends JDialog implements IConstants
             Utils.errMsg("Nothing selected for Data Mode");
             return false;
         }
-        if(index < 0 || index >= viewer.dataModeList.length) {
+        if(index < 0 || index >= EcgStripViewer.dataModeList.length) {
             Utils.errMsg("Got invalid index for Data Mode: " + index);
             return false;
         }
-        DataMode dataMode = viewer.dataModeList[index];
+        DataMode dataMode = EcgStripViewer.dataModeList[index];
 
         // Call the saveFile method of the viewer
         viewer.saveFile(file, id, stripList, dataMode);

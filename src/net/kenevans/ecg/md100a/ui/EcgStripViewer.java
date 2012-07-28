@@ -1061,7 +1061,6 @@ public class EcgStripViewer extends JFrame implements IConstants
                     // rsaVals[i] *= .02;
                     // }
                     // Scale them
-                    double subPlotHeight = .25 * totalHeight / nSubPlots;
                     for(int i = 0; i < rsaVals.length; i++) {
                         // Scale according to the RSA scale
                         rsaVals[i] *= rsaScale;
