@@ -92,13 +92,19 @@ public class EcgStripViewer extends JFrame implements IConstants
     public String defaultSavePath = DEFAULT_DIR;
 
     /**
-     * Determines how much of the 256-byte plot range is shown in the sub plot.
-     * The height of the sub-plot area is 256 / DATA_SCALE_DEFAULT. Choosing
-     * larger values makes the curve larger.
+     * Determines the default value for determining the total range. Choosing
+     * larger values makes the data look larger.
      */
     private static final double DATA_SCALE_DEFAULT = 1;
+    /**
+     * Determines the default scale factor for converting RSA values in seconds
+     * to mm on the plot. The units are mm/sec.
+     */
+    private static final double RSA_SCALE_DEFAULT = 100;
     /** The dataScale to use */
     private double dataScale = DATA_SCALE_DEFAULT;
+    /** The rsaScale to use */
+    private double rsaScale = RSA_SCALE_DEFAULT;
 
     /** The color for the ECG strip. */
     private Paint stripColor = Color.RED;
@@ -133,9 +139,9 @@ public class EcgStripViewer extends JFrame implements IConstants
     /** The XYSeriesCollection used in the plot. It is filled out as needed. */
     private XYSeriesCollection dataset = new XYSeriesCollection();
 
-    /** Used to retain the domain maximum for resetting the plot. */
+    /** Used to retain the domain limits for resetting the plot. */
     private double defaultXMax;
-    /** Used to retain the range maximum for resetting the plot. */
+    /** Used to retain the range limits for resetting the plot. */
     private double defaultYMax;
     /** Whether to show markers in the plot. */
     private boolean showMarkers = false;
@@ -611,7 +617,7 @@ public class EcgStripViewer extends JFrame implements IConstants
     private JFreeChart createChart() {
         // Generate the graph
         JFreeChart chart = ChartFactory.createXYLineChart(
-            "30-sec ECG Measurement", "sec (25 mm / sec)", "mV (10 mm / mV)",
+            "30-sec ECG Measurement", "sec (25 mm / sec)", "mm (10 mm / mV)",
             null, PlotOrientation.VERTICAL, // BasicImagePlot
             // Orientation
             false, // Show Legend
@@ -620,7 +626,7 @@ public class EcgStripViewer extends JFrame implements IConstants
             );
         // Change the axis limits
         chart.getXYPlot().getRangeAxis().setRange(-YMAX, YMAX);
-        chart.getXYPlot().getRangeAxis().setTickLabelsVisible(false);
+        // chart.getXYPlot().getRangeAxis().setTickLabelsVisible(false);
         chart.getXYPlot().getDomainAxis().setRange(0, XMAX);
         XYPlot plot = chart.getXYPlot();
         // Set the dataset. We will mostly deal with the dataset later.
@@ -711,6 +717,40 @@ public class EcgStripViewer extends JFrame implements IConstants
                 }
                 // Redraw if it has changed
                 if(dataScale != oldDataScale) {
+                    clearPlot();
+                    addStripToChart(curStrip);
+                }
+            }
+        });
+        menu1.add(item);
+
+        item = new JMenuItem();
+        item.setText("RSA Scale...");
+        item.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ae) {
+                double oldRsaScale = rsaScale;
+                String value = (String)JOptionPane.showInputDialog(null,
+                    "Enter the RSA scale factor in mm/sec"
+                        + "(non-negative floating point value)" + LS
+                        + "or -1 to restore the default", "RSA Scale Factor",
+                    JOptionPane.PLAIN_MESSAGE, null, null, rsaScale);
+                if(value == null) {
+                    return;
+                }
+                try {
+                    rsaScale = Double.parseDouble(value);
+                } catch(NumberFormatException ex) {
+                    Utils.errMsg("Invalid value for the RSA scale factor,"
+                        + " using default (" + RSA_SCALE_DEFAULT + ")");
+                    rsaScale = RSA_SCALE_DEFAULT;
+                }
+                if(rsaScale < 0) {
+                    Utils.errMsg("Invalid value for the RSA scale factor,"
+                        + " using default (" + RSA_SCALE_DEFAULT + ")");
+                    rsaScale = RSA_SCALE_DEFAULT;
+                }
+                // Redraw if it has changed
+                if(rsaScale != oldRsaScale) {
                     clearPlot();
                     addStripToChart(curStrip);
                 }
@@ -865,7 +905,8 @@ public class EcgStripViewer extends JFrame implements IConstants
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 JFreeChart chart = chartPanel.getChart();
-                chart.getXYPlot().getRangeAxis().setRange(0, defaultYMax);
+                chart.getXYPlot().getRangeAxis()
+                    .setRange(-.5 * defaultYMax, .5 * defaultYMax);
                 chart.getXYPlot().getDomainAxis().setRange(0, defaultXMax);
                 if(showMarkers) {
                     showMarkers = false;
@@ -886,7 +927,8 @@ public class EcgStripViewer extends JFrame implements IConstants
         item.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 JFreeChart chart = chartPanel.getChart();
-                chart.getXYPlot().getRangeAxis().setRange(0, defaultYMax);
+                chart.getXYPlot().getRangeAxis()
+                    .setRange(-.5 * defaultYMax, .5 * defaultYMax);
                 chart.getXYPlot().getDomainAxis().setRange(0, defaultXMax);
             }
         });
@@ -966,10 +1008,9 @@ public class EcgStripViewer extends JFrame implements IConstants
             }
 
             // Determine the 3 plot areas
-            double scale = nSubPlots * dataScale;
-            double dataHeight = 1024;
-            double totalHeight = nSubPlots * dataHeight;
-            totalHeight /= scale;
+            // The totalHeight should be divisible by 2, 3, and 5
+            double totalHeight = 60;
+            totalHeight /= dataScale;
 
             // Set the axis limits
             double xMax = XMAX / nSubPlots;
@@ -991,6 +1032,8 @@ public class EcgStripViewer extends JFrame implements IConstants
             // Set the axis limits in the plot
             JFreeChart chart = chartPanel.getChart();
             chart.getXYPlot().getRangeAxis().setRange(0, totalHeight);
+            chart.getXYPlot().getRangeAxis()
+                .setRange(-.5 * totalHeight, .5 * totalHeight);
             chart.getXYPlot().getDomainAxis().setRange(0, xMax);
 
             // Hard-coded values
@@ -1019,14 +1062,8 @@ public class EcgStripViewer extends JFrame implements IConstants
                     // }
                     // Scale them
                     double subPlotHeight = .25 * totalHeight / nSubPlots;
-                    System.out.println(subPlotHeight);
-                    // Determine scale factor to get a specified number of sec
-                    // per tick mark
-                    double secPerTick = .05;
-                    double unitsPerTick = 50;
-                    double rsaScale = unitsPerTick / secPerTick;
                     for(int i = 0; i < rsaVals.length; i++) {
-                        // Scale
+                        // Scale according to the RSA scale
                         rsaVals[i] *= rsaScale;
                         // lastPeakVal = 0;
                         // lastPeakVal = nextPeak;
@@ -1053,7 +1090,7 @@ public class EcgStripViewer extends JFrame implements IConstants
             // DEBUG
             if(debug) {
                 plot("Base Line", Color.GREEN, nSubPlots, totalHeight, .5,
-                    xVals, new double[] {25});
+                    xVals, new double[] {5});
             }
 
         } catch(Exception ex) {
@@ -1092,8 +1129,8 @@ public class EcgStripViewer extends JFrame implements IConstants
         double offset;
         for(int i = 0; i < nSubPlots; i++) {
             XYSeries series = new XYSeries(seriesName + " " + (i + 1));
-            offset = totalHeight - (i + 1 - originFraction) * totalHeight
-                / nSubPlots;
+            offset = .5 * totalHeight
+                - ((i + 1 - originFraction) * totalHeight) / nSubPlots;
             for(int n = 0; n < nPoints; n++) {
                 if(nDataPoints == 1) {
                     series.add(xVals[n], yVals[0] + offset);

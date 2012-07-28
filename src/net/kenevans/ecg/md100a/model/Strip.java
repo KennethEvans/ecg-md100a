@@ -164,10 +164,11 @@ public class Strip implements IConstants
                     Utils.errMsg("Error reading segment " + seg);
                 }
             }
-            // Subtract 512 so 0 corresponds to 0 mV
-            // TODO Could convert to mV here
+            // Subtract 512 so 0 corresponds to 0 mV or 0 mm
+            // Scale to mm
             for(int i = 0; i < vals.length; i++) {
                 vals[i] -= 512;
+                vals[i] *= mmPerUnit;
             }
         } catch(EOFException ex) {
             String msg = "EOF getting strip at seg=" + seg + LS
@@ -356,7 +357,7 @@ public class Strip implements IConstants
         // Hard-coded flag to check if there are adjacent negative values
         boolean checkNegative = true;
         // Hard-coded threshold (value must be greater than this)
-        double threshold = 25;
+        double threshold = 2.5;
         // Must be above threshold
         if(fVals[index] < threshold) {
             return false;
@@ -618,8 +619,6 @@ public class Strip implements IConstants
         }
 
         // DEBUG
-        // System.out.println(LS + "Peak Indices for Strip " + getStringDate()
-        // + " " + getStringTime(false));
         // for(int i = 0; i < peakIndices.length; i++) {
         // System.out.printf("%2d %4d %5.2f %9.4f \n", i, peakIndices[i],
         // getTimeForIndex(peakIndices[i]), rsaVals[peakIndices[i]]);
