@@ -209,14 +209,15 @@ public class Strip implements IConstants
         for(int seg = 0; seg < STRIP_N_DATA_SEGMENTS; seg++) {
             for(int i = 0; i < SEGMENT_LENGTH; i++) {
                 if(i == 0) {
-                    val = (short)Math.round(vals[nextVal] + 512);
+                    val = (short)Math.round(vals[nextVal] / mmPerUnit + 512);
                     bytes[nextIndex++] = (byte)((val >> 8) & 0xff);
                 } else if(i == 1) {
+                    // Using val defined in i=0 iteration
                     bytes[nextIndex++] = (byte)(val & 0xff);
                     nextVal++;
                 } else {
-                    val = (short)(Math.round(vals[nextVal]));
-                    val -= (short)(Math.round(vals[nextVal - 1]));
+                    val = (short)(Math.round(vals[nextVal] / mmPerUnit));
+                    val -= (short)(Math.round(vals[nextVal - 1] / mmPerUnit));
                     nextVal++;
                     // This logic is necessary because Java's byte is unsigned
                     if(val >= 0) {
