@@ -65,8 +65,11 @@ public interface IConstants
     /** Conversion from index to seconds. */
     public static final double INDEX_TO_SEC = (double)STRIP_SAMPLE_TIME
         / STRIP_N_DATA_VALS;
-    
+
     /** Conversion from bytes to mm */
     public static final double mmPerUnit = .0525;
+
+    /** The fraction to use in determining the average baseline for RSA values. */
+    public static double RSA_AVG_OUTLIER_FRACTION = .2;
 
 }

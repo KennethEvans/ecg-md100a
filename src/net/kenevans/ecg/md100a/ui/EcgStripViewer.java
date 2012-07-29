@@ -1,21 +1,17 @@
 package net.kenevans.ecg.md100a.ui;
 
 import java.awt.BorderLayout;
-import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Frame;
-import java.awt.Image;
-import java.awt.Paint;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.util.List;
 
 import javax.swing.BorderFactory;
-import javax.swing.ButtonGroup;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
@@ -29,8 +25,6 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
-import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JSplitPane;
@@ -43,19 +37,10 @@ import net.kenevans.core.utils.AboutBoxPanel;
 import net.kenevans.core.utils.ImageUtils;
 import net.kenevans.core.utils.Utils;
 import net.kenevans.ecg.md100a.model.EcgFileModel;
+import net.kenevans.ecg.md100a.model.EcgFilterModel;
 import net.kenevans.ecg.md100a.model.Header;
 import net.kenevans.ecg.md100a.model.IConstants;
 import net.kenevans.ecg.md100a.model.Strip;
-import net.kenevans.ecg.md100a.utils.MathUtils;
-
-import org.jfree.chart.ChartFactory;
-import org.jfree.chart.ChartPanel;
-import org.jfree.chart.JFreeChart;
-import org.jfree.chart.plot.PlotOrientation;
-import org.jfree.chart.plot.XYPlot;
-import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
-import org.jfree.data.xy.XYSeries;
-import org.jfree.data.xy.XYSeriesCollection;
 
 /**
  * EcgStripViewer is a viewer to view ECG strips from the MD100A ECG Monitor.
@@ -83,40 +68,19 @@ public class EcgStripViewer extends JFrame implements IConstants
     /** The divider location for the lower split pane. */
     private static final int LOWER_PANE_DIVIDER_LOCATION = WIDTH / 2;
 
-    /** Default value for the range maximum. */
-    private static final double YMAX = 160;
-    /** Value for the domain maximum. */
-    private static final double XMAX = 30;
-
     /** Keeps the last-used path for the file open dialog. */
     public String defaultOpenPath = DEFAULT_DIR;
     /** Keeps the last-used path for the file save dialog. */
     public String defaultSavePath = DEFAULT_DIR;
 
-    /**
-     * Determines the default value for determining the total range. Choosing
-     * larger values makes the data look larger.
-     */
-    private static final double DATA_SCALE_DEFAULT = 1;
-    /**
-     * Determines the default scale factor for converting RSA values in seconds
-     * to mm on the plot. The units are mm/sec.
-     */
-    private static final double RSA_SCALE_DEFAULT = 100;
-    /** The dataScale to use */
-    private double dataScale = DATA_SCALE_DEFAULT;
-    /** The rsaScale to use */
-    private double rsaScale = RSA_SCALE_DEFAULT;
-
-    /** The color for the ECG strip. */
-    private Paint stripColor = Color.RED;
-    /** The color for the RSA curve. */
-    private Paint rsaColor = new Color(0, 153, 255);
-    /** The color for the RSA base line. */
-    private Paint rsaBaseLineColor = new Color(0, 0, 255);
-
     /** The model for this user interface. */
     private EcgFileModel model;
+
+    /** The plot for this user interface. */
+    private EcgPlot plot;
+
+    /** The data ecgFilterModel model for this user interface. */
+    private EcgFilterModel ecgFilterModel;
 
     // User interface controls (Many do not need to be global)
     private Container contentPane = this.getContentPane();
@@ -127,7 +91,6 @@ public class EcgStripViewer extends JFrame implements IConstants
     private JScrollPane listScrollPane;
     private JTextArea beatTextArea;
     private JPanel displayPanel = new JPanel();
-    private ChartPanel chartPanel;
     private JPanel mainPanel = new JPanel();
     private JSplitPane mainPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
         displayPanel, lowerPanel);
@@ -138,133 +101,12 @@ public class EcgStripViewer extends JFrame implements IConstants
     /** The currently selected Strip. */
     private Strip curStrip;
 
-    /** The XYSeriesCollection used in the plot. It is filled out as needed. */
-    private XYSeriesCollection dataset = new XYSeriesCollection();
-
-    /** Used to retain the domain limits for resetting the plot. */
-    private double defaultXMax;
-    /** Used to retain the range limits for resetting the plot. */
-    private double defaultYMax;
-    /** Whether to show markers in the plot. */
-    private boolean showMarkers = false;
-    /** Whether to show RSA data in the plot. */
-    private boolean showRSA = true;
-    /** The fraction to use in determining the average baseline for RSA values. */
-    private double RSA_AVG_OUTLIER_FRACTION = .2;
-    /** Whether to get the RSA values from the default or the current data mode */
-    private boolean useDefaultAsRsaSource = true;
-    /** The default window to use for the median filter. */
-    private static final int MEDIAN_FILTER_WINDOW_DEFAULT = 50;
-    /** The window to use for the median filter. */
-    private int medianFilterWindow = MEDIAN_FILTER_WINDOW_DEFAULT;
-    /** The default cutoff to use for the Butterworth low pass filter. */
-    private static final double BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT = 8;
-    /** The cutoff to use for the Butterworth low pass filter. */
-    private double butterworthLowPassCutoff = BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT;
-    /** The number of sub-plots to use. */
-    private int nSubPlots = 1;
-
-    /** List of dataModes to handle. */
-    public static final DataMode[] dataModeList = {DataMode.DEFAULT,
-        DataMode.MEDIAN_SUBTRACTED, DataMode.MEDIAN, DataMode.BUTTERWORTH,
-        DataMode.BUTTERWORTH_LOW_PASS,
-        DataMode.MEDIAN_SUBTRACTED_BUTTERWORTH_LOW_PASS,};
-    /** The DataMode to use. */
-    public DataMode dataMode = DataMode.DEFAULT;
-
-    /**
-     * DataMode represents the various modes for displaying the data on the
-     * plot. Each DataMode has a name for use in menus and the like and a
-     * Process which defines how the original data is processed in this mode.
-     */
-    public static enum DataMode {
-        DEFAULT("Default") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                double[] result = new double[data.length];
-                for(int i = 0; i < result.length; i++) {
-                    result[i] = data[i];
-                }
-                return result;
-            }
-        },
-        MEDIAN_SUBTRACTED("Median Subtracted") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                double[] result = MathUtils.medianFilter(data,
-                    viewer.medianFilterWindow);
-                for(int i = 0; i < data.length; i++) {
-                    result[i] = data[i] - result[i];
-                }
-                return result;
-            }
-        },
-        MEDIAN("Median") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                return MathUtils.medianFilter(data, viewer.medianFilterWindow);
-            }
-        },
-        BUTTERWORTH("Amperor Butterworth") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                return MathUtils.butterworth_6_05_75(data);
-            }
-        },
-        BUTTERWORTH_LOW_PASS("Butterworth Low Pass") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                return MathUtils.butterworthLowPass2Pole(SAMPLE_RATE,
-                    viewer.butterworthLowPassCutoff, data);
-            }
-        },
-        MEDIAN_SUBTRACTED_BUTTERWORTH_LOW_PASS(
-            "Median Subtracted Butterworth Low Pass Scaled") {
-            @Override
-            double[] process(EcgStripViewer viewer, double[] data) {
-                // Hard-coded. Get averages above mean + nSigma times sigma.
-                double nSigma = 1.0;
-                double[] temp = DataMode.MEDIAN_SUBTRACTED
-                    .process(viewer, data);
-                // Get the average of the higher points
-                double avg1 = findPeakAverage(temp, nSigma);
-                temp = MathUtils.butterworthLowPass2Pole(SAMPLE_RATE,
-                    viewer.butterworthLowPassCutoff, temp);
-                // Get the average of the higher points
-                double avg2 = findPeakAverage(temp, nSigma);
-                // Scale the results so the averages are the same
-                double factor = avg2 != 0 ? avg1 / avg2 : 1;
-                // // DEBUG
-                // System.out.println("avg1=" + avg1 + " avg2=" + avg2
-                // + " factor=" + factor);
-                for(int i = 0; i < temp.length; i++) {
-                    temp[i] = factor * temp[i];
-                }
-                return temp;
-            }
-        };
-
-        public String name;
-
-        DataMode(String name) {
-            this.name = name;
-        }
-
-        /**
-         * Method that processes the data for this mode. It must return a new
-         * array and not change the input.
-         * 
-         * @param viewer The EcgStripViewer. Used to access instance variables.
-         * @param data The input data.
-         * @return
-         */
-        abstract double[] process(EcgStripViewer viewer, double[] data);
-    };
-
     /**
      * EcgStripViewer constructor.
      */
     public EcgStripViewer() {
+        ecgFilterModel = new EcgFilterModel();
+        plot = new EcgPlot(this);
         uiInit();
     }
 
@@ -277,15 +119,15 @@ public class EcgStripViewer extends JFrame implements IConstants
         // Chart panel
         displayPanel.setLayout(new BorderLayout());
         displayPanel.setPreferredSize(new Dimension(WIDTH, HEIGHT / 2));
-        createChart();
-        chartPanel.setPreferredSize(new Dimension(600, 270));
-        chartPanel.setDomainZoomable(true);
-        chartPanel.setRangeZoomable(true);
+        plot.createChart();
+        plot.getChartPanel().setPreferredSize(new Dimension(600, 270));
+        plot.getChartPanel().setDomainZoomable(true);
+        plot.getChartPanel().setRangeZoomable(true);
         javax.swing.border.CompoundBorder compoundborder = BorderFactory
             .createCompoundBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4),
                 BorderFactory.createEtchedBorder());
-        chartPanel.setBorder(compoundborder);
-        displayPanel.add(chartPanel);
+        plot.getChartPanel().setBorder(compoundborder);
+        displayPanel.add(plot.getChartPanel());
 
         // List panel
         listScrollPane = new JScrollPane(list);
@@ -558,7 +400,7 @@ public class EcgStripViewer extends JFrame implements IConstants
      * @param fileName
      */
     public void saveFile(File file, String id, List<Integer> stripList,
-        DataMode dataMode) {
+        EcgFilterModel.DataMode dataMode) {
         if(file == null) {
             Utils.errMsg("File is null");
             return;
@@ -585,7 +427,7 @@ public class EcgStripViewer extends JFrame implements IConstants
             for(int n : stripList) {
                 // stripData = model.getStrips()[n].getData();
                 vals = model.getStrips()[n].getDataAsBytes();
-                vals = dataMode.process(this, vals);
+                vals = dataMode.process(ecgFilterModel, vals);
                 stripData = model.getStrips()[n].getConvertedBytes(vals);
                 start += end;
                 end = STRIP_LENGTH;
@@ -615,592 +457,6 @@ public class EcgStripViewer extends JFrame implements IConstants
     }
 
     /**
-     * Creates the JFreeChart and ChartPanel. Sets the XYDataSet in it but does
-     * nothing with it otherwise.
-     * 
-     * @return The chart created.
-     */
-    private JFreeChart createChart() {
-        // Generate the graph
-        JFreeChart chart = ChartFactory.createXYLineChart(
-            "30-sec ECG Measurement", "sec (25 mm / sec)", "mm (10 mm / mV)",
-            null, PlotOrientation.VERTICAL, // BasicImagePlot
-            // Orientation
-            false, // Show Legend
-            false, // Use tooltips
-            false // Configure chart to generate URLs?
-            );
-        // Change the axis limits
-        chart.getXYPlot().getRangeAxis().setRange(-YMAX, YMAX);
-        // chart.getXYPlot().getRangeAxis().setTickLabelsVisible(false);
-        chart.getXYPlot().getDomainAxis().setRange(0, XMAX);
-        XYPlot plot = chart.getXYPlot();
-        // Set the dataset. We will mostly deal with the dataset later.
-        plot.setDataset(dataset);
-
-        // Define the chartPanel before extending the popup menu
-        chartPanel = new ChartPanel(chart);
-
-        // Add to the popup menu
-        extendPopupMenu();
-
-        return chart;
-    }
-
-    /**
-     * Adds to the plot pop-up menu.
-     */
-    private void extendPopupMenu() {
-        JPopupMenu menu = chartPanel.getPopupMenu();
-        if(menu == null) return;
-
-        JSeparator separator = new JSeparator();
-        menu.add(separator);
-
-        JMenuItem item = new JMenuItem();
-        item.setText("Toggle RSA");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                showRSA = !showRSA;
-                clearPlot();
-                addStripToChart(curStrip);
-            }
-        });
-        menu.add(item);
-
-        JMenu menu1 = new JMenu("Data Plotted");
-        menu.add(menu1);
-
-        ButtonGroup bgroup = new ButtonGroup();
-
-        // Loop over the dataModes
-        JRadioButtonMenuItem radioButtonItem;
-        for(final DataMode mode : dataModeList) {
-            radioButtonItem = new JRadioButtonMenuItem();
-            radioButtonItem.setText(mode.name);
-            radioButtonItem.setSelected(dataMode == mode);
-            radioButtonItem.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent ae) {
-                    dataMode = mode;
-                    if(curStrip != null) {
-                        clearPlot();
-                        addStripToChart(curStrip);
-                        updateBeatText(curStrip);
-                    }
-                }
-            });
-            menu1.add(radioButtonItem);
-            bgroup.add(radioButtonItem);
-        }
-
-        menu1 = new JMenu("Settings");
-        menu.add(menu1);
-
-        item = new JMenuItem();
-        item.setText("Data Scale...");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                double oldDataScale = dataScale;
-                String value = (String)JOptionPane.showInputDialog(null,
-                    "Enter the data scale factor (non-negative floating point value)"
-                        + LS + "or -1 to restore the default",
-                    "Data Scale Factor", JOptionPane.PLAIN_MESSAGE, null, null,
-                    dataScale);
-                if(value == null) {
-                    return;
-                }
-                try {
-                    dataScale = Double.parseDouble(value);
-                } catch(NumberFormatException ex) {
-                    Utils.errMsg("Invalid value for the data scale factor,"
-                        + " using default (" + DATA_SCALE_DEFAULT + ")");
-                    dataScale = DATA_SCALE_DEFAULT;
-                }
-                if(dataScale < 0) {
-                    Utils.errMsg("Invalid value for the data scale factor,"
-                        + " using default (" + DATA_SCALE_DEFAULT + ")");
-                    dataScale = DATA_SCALE_DEFAULT;
-                }
-                // Redraw if it has changed
-                if(dataScale != oldDataScale) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu1.add(item);
-
-        item = new JMenuItem();
-        item.setText("RSA Scale...");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                double oldRsaScale = rsaScale;
-                String value = (String)JOptionPane.showInputDialog(null,
-                    "Enter the RSA scale factor in mm/sec"
-                        + "(non-negative floating point value)" + LS
-                        + "or -1 to restore the default", "RSA Scale Factor",
-                    JOptionPane.PLAIN_MESSAGE, null, null, rsaScale);
-                if(value == null) {
-                    return;
-                }
-                try {
-                    rsaScale = Double.parseDouble(value);
-                } catch(NumberFormatException ex) {
-                    Utils.errMsg("Invalid value for the RSA scale factor,"
-                        + " using default (" + RSA_SCALE_DEFAULT + ")");
-                    rsaScale = RSA_SCALE_DEFAULT;
-                }
-                if(rsaScale < 0) {
-                    Utils.errMsg("Invalid value for the RSA scale factor,"
-                        + " using default (" + RSA_SCALE_DEFAULT + ")");
-                    rsaScale = RSA_SCALE_DEFAULT;
-                }
-                // Redraw if it has changed
-                if(rsaScale != oldRsaScale) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu1.add(item);
-
-        item = new JMenuItem();
-        item.setText("Number of Sub-Plots...");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                int oldNSubPlots = nSubPlots;
-                String value = (String)JOptionPane.showInputDialog(null,
-                    "Enter the number of sub-plots desired", "Sub-Plots",
-                    JOptionPane.PLAIN_MESSAGE, null, new String[] {"1", "2",
-                        "3"}, String.valueOf(nSubPlots));
-                if(value == null) {
-                    return;
-                }
-                try {
-                    nSubPlots = Integer.parseInt(value);
-                } catch(NumberFormatException ex) {
-                    Utils.errMsg("Invalid value for the number of sub-plots,"
-                        + " using default (3)");
-                    nSubPlots = 3;
-                }
-                if(nSubPlots < 0) {
-                    Utils.errMsg("Invalid value for the number of sub-plots,"
-                        + " using default (3)");
-                    nSubPlots = 3;
-                }
-                // Redraw if we are showing one of those modes
-                if(nSubPlots != oldNSubPlots) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu1.add(item);
-
-        item = new JMenuItem();
-        item.setText("Median Filter Window...");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                String value = (String)JOptionPane.showInputDialog(null,
-                    "Enter window (non-negative integer)" + LS
-                        + "or -1 to restore the default",
-                    "Median Filter Window", JOptionPane.PLAIN_MESSAGE, null,
-                    null, medianFilterWindow);
-                if(value == null) {
-                    return;
-                }
-                try {
-                    medianFilterWindow = Integer.parseInt(value);
-                } catch(NumberFormatException ex) {
-                    Utils.errMsg("Invalid value for the Median Filter Window,"
-                        + " using default (" + MEDIAN_FILTER_WINDOW_DEFAULT
-                        + ")");
-                    medianFilterWindow = MEDIAN_FILTER_WINDOW_DEFAULT;
-                }
-                if(medianFilterWindow < 0) {
-                    Utils.errMsg("Invalid value for the Median Filter Window,"
-                        + " using default (" + MEDIAN_FILTER_WINDOW_DEFAULT
-                        + ")");
-                    medianFilterWindow = MEDIAN_FILTER_WINDOW_DEFAULT;
-                }
-                // Redraw if we are showing one of those modes
-                if(dataMode == DataMode.MEDIAN
-                    || dataMode == DataMode.MEDIAN_SUBTRACTED) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu1.add(item);
-
-        item = new JMenuItem();
-        item.setText("Butterworth Low Pass Cutoff...");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                String value = (String)JOptionPane.showInputDialog(null,
-                    "Enter cutoff (non-negative floating point value)" + LS
-                        + "or -1 to restore the default",
-                    "Butterworth Low Pass Cutoff", JOptionPane.PLAIN_MESSAGE,
-                    null, null, butterworthLowPassCutoff);
-                if(value == null) {
-                    return;
-                }
-                try {
-                    butterworthLowPassCutoff = Double.parseDouble(value);
-                } catch(NumberFormatException ex) {
-                    Utils
-                        .errMsg("Invalid value for the Butterworth Low Pass Cutoff,"
-                            + " using default ("
-                            + BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT + ")");
-                    butterworthLowPassCutoff = BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT;
-                }
-                if(medianFilterWindow < 0) {
-                    Utils
-                        .errMsg("Invalid value for the Butterworth Low Pass Cutoff,"
-                            + " using default ("
-                            + BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT + ")");
-                    butterworthLowPassCutoff = BUTTERWORTH_LP_FILTER_CUTOFF_DEFAULT;
-                }
-                // Redraw if we are showing one of those modes
-                if(dataMode == DataMode.BUTTERWORTH_LOW_PASS) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu1.add(item);
-
-        JMenu menu2 = new JMenu("RSA");
-        menu1.add(menu2);
-
-        bgroup = new ButtonGroup();
-
-        // Select RSA source
-        radioButtonItem = new JRadioButtonMenuItem();
-        radioButtonItem.setText("From Default");
-        radioButtonItem.setSelected(true);
-        radioButtonItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                useDefaultAsRsaSource = true;
-                if(curStrip != null) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu2.add(radioButtonItem);
-        bgroup.add(radioButtonItem);
-
-        radioButtonItem = new JRadioButtonMenuItem();
-        radioButtonItem.setText("From Data Plotted");
-        radioButtonItem.setSelected(true);
-        radioButtonItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                useDefaultAsRsaSource = false;
-                if(curStrip != null) {
-                    clearPlot();
-                    addStripToChart(curStrip);
-                }
-            }
-        });
-        menu2.add(radioButtonItem);
-        bgroup.add(radioButtonItem);
-
-        item = new JMenuItem();
-        item.setText("Reset");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                JFreeChart chart = chartPanel.getChart();
-                chart.getXYPlot().getRangeAxis()
-                    .setRange(-.5 * defaultYMax, .5 * defaultYMax);
-                chart.getXYPlot().getDomainAxis().setRange(0, defaultXMax);
-                if(showMarkers) {
-                    showMarkers = false;
-                    // Get the renderer
-                    XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer)chartPanel
-                        .getChart().getXYPlot().getRenderer();
-                    // Change for the first 3 series
-                    for(int i = 0; i < 3; i++) {
-                        renderer.setSeriesShapesVisible(i, showMarkers);
-                    }
-                }
-            }
-        });
-        menu.add(item);
-
-        item = new JMenuItem();
-        item.setText("Reset Axes");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                JFreeChart chart = chartPanel.getChart();
-                chart.getXYPlot().getRangeAxis()
-                    .setRange(-.5 * defaultYMax, .5 * defaultYMax);
-                chart.getXYPlot().getDomainAxis().setRange(0, defaultXMax);
-            }
-        });
-        menu.add(item);
-
-        item = new JMenuItem();
-        item.setText("Toggle Markers");
-        item.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ae) {
-                showMarkers = !showMarkers;
-                // Get the renderer
-                XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer)chartPanel
-                    .getChart().getXYPlot().getRenderer();
-                // Change for the first 3 series
-                for(int i = 0; i < 3; i++) {
-                    renderer.setSeriesShapesVisible(i, showMarkers);
-                }
-            }
-        });
-        menu.add(item);
-    }
-
-    /**
-     * Removes all series from the plot.
-     */
-    private void clearPlot() {
-        try {
-            dataset.removeAllSeries();
-        } catch(Exception ex) {
-            Utils.excMsg("Error clearing plot", ex);
-        }
-    }
-
-    /**
-     * Fills in the chart with the data from the given strip.
-     * 
-     * @param strip
-     */
-    // TODO
-    private void addStripToChart(Strip strip) {
-        double[] stripData;
-        try {
-            stripData = strip.getDataAsBytes();
-            int nDataPoints = stripData.length;
-            // // Work with a copy of the data so we don't modify the original
-            // double[] data = new double[nDataPoints];
-            // for(int i = 0; i < nDataPoints; i++) {
-            // data[i] = stripData[i];
-            // }
-            // // Process according to the dataMode
-            // data = dataMode.process(this, data);
-
-            // process() should return a new array
-            double[] data = dataMode.process(this, stripData);
-
-            // DEBUG
-            boolean debug = false;
-            if(debug) {
-                // Find the max and min of the data
-                double max = -Double.MAX_VALUE;
-                double min = Double.MAX_VALUE;
-                int maxIndex = -1;
-                int minIndex = -1;
-                for(int i = 0; i < nDataPoints; i++) {
-                    if(data[i] > max) {
-                        maxIndex = i;
-                        max = data[i];
-                    }
-                    if(data[i] < min) {
-                        minIndex = i;
-                        min = data[i];
-                    }
-                }
-                System.out.println();
-                System.out.println("addStripToChart: min=" + min + " @ "
-                    + minIndex + " max=" + max + " @ " + maxIndex);
-            }
-
-            // Determine the 3 plot areas
-            // The totalHeight should be divisible by 2, 3, and 5
-            double totalHeight = 60;
-            totalHeight /= dataScale;
-
-            // Set the axis limits
-            double xMax = XMAX / nSubPlots;
-
-            // Use for resetting the plot, otherwise it will auto-scale
-            defaultXMax = xMax;
-            defaultYMax = totalHeight;
-
-            // Generate the x values
-            // TODO Would need 7501 values to have i = 0 correspond to 0 sec
-            // and i= nDataPoints-1 to correspond to 30 sec
-            // This gives an error of .004 (or less)
-            int nPoints = nDataPoints / nSubPlots;
-            double[] xVals = new double[nPoints];
-            for(int n = 0; n < nPoints; n++) {
-                xVals[n] = xMax * n / (nPoints - 1);
-            }
-
-            // Set the axis limits in the plot
-            JFreeChart chart = chartPanel.getChart();
-            chart.getXYPlot().getRangeAxis().setRange(0, totalHeight);
-            chart.getXYPlot().getRangeAxis()
-                .setRange(-.5 * totalHeight, .5 * totalHeight);
-            chart.getXYPlot().getDomainAxis().setRange(0, xMax);
-
-            // Hard-coded values
-            boolean doRSABaseLines = true;
-            boolean doBaseLines = true;
-
-            // Plot the data
-            plot("Segment", stripColor, nSubPlots, totalHeight, .5, xVals, data);
-
-            // Add RSA values
-            if(showRSA) {
-                int[] peakIndices;
-                if(useDefaultAsRsaSource) {
-                    peakIndices = strip.getPeakIndices();
-                } else {
-                    peakIndices = Strip.getPeakIndices(data);
-                }
-                if(peakIndices.length > 2) {
-                    // Get the peak index values
-                    double[] rsaVals = Strip.getRsaArray(peakIndices, data,
-                        RSA_AVG_OUTLIER_FRACTION);
-                    // DEBUG
-                    // for(int i = 0; i < rsaVals.length; i++) {
-                    // rsaVals[i] = (i/250);
-                    // rsaVals[i] *= .02;
-                    // }
-                    // Scale them
-                    for(int i = 0; i < rsaVals.length; i++) {
-                        // Scale according to the RSA scale
-                        rsaVals[i] *= rsaScale;
-                        // lastPeakVal = 0;
-                        // lastPeakVal = nextPeak;
-                    }
-
-                    plot("RSA", rsaColor, nSubPlots, totalHeight, .25, xVals,
-                        rsaVals);
-
-                    // Create some RSA zero lines
-                    if(doRSABaseLines) {
-                        plot("RSA Base Line", rsaBaseLineColor, nSubPlots,
-                            totalHeight, .25, xVals, new double[] {0});
-                    }
-                }
-            }
-
-            // Create some zero lines
-            if(doBaseLines) {
-                plot("Base Line", Color.BLACK, nSubPlots, totalHeight, .5,
-                    xVals, new double[] {0});
-            }
-
-            // Create some test lines
-            // DEBUG
-            if(debug) {
-                plot("Base Line", Color.GREEN, nSubPlots, totalHeight, .5,
-                    xVals, new double[] {5});
-            }
-
-        } catch(Exception ex) {
-            Utils.excMsg("Error adding profile to plot", ex);
-            ex.printStackTrace();
-        }
-    }
-
-    /**
-     * General routine to add one or more series to a plot.
-     * 
-     * @param seriesName The series name will be this value with the sub-plot
-     *            number appended.
-     * @param paint A Paint representing the color of the series.
-     * @param nSubPlots The number of sub-plots to use.
-     * @param totalHeight The total height of the chart. Each sub-plot height
-     *            will be this value divided by nSubPlots.
-     * @param originFraction What fraction of the sub-plot area to use as the
-     *            origin. Measured from the bottom. .5 is the middle, and .2 is
-     *            below the middle. The useful range is 0 to 1.
-     * @param xVals The array of x values.
-     * @param yVals The array of y values. If the length of this array is 1, it
-     *            is used as a constant value for all x values. Otherwise it
-     *            should be nSeries times as long as the length of the x values.
-     *            If it is shorter, then null will be used for the remaining
-     *            plot values.
-     */
-    private void plot(String seriesName, Paint paint, int nSubPlots,
-        double totalHeight, double originFraction, double[] xVals,
-        double[] yVals) {
-        int index;
-        int nPoints = xVals.length;
-        int nDataPoints = yVals.length;
-        XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer)chartPanel
-            .getChart().getXYPlot().getRenderer();
-        double offset;
-        for(int i = 0; i < nSubPlots; i++) {
-            XYSeries series = new XYSeries(seriesName + " " + (i + 1));
-            offset = .5 * totalHeight
-                - ((i + 1 - originFraction) * totalHeight) / nSubPlots;
-            for(int n = 0; n < nPoints; n++) {
-                if(nDataPoints == 1) {
-                    series.add(xVals[n], yVals[0] + offset);
-                } else {
-                    index = i * nPoints + n;
-                    // In case yVals does not fill the segment
-                    if(index > nDataPoints - 1) {
-                        series.add(xVals[n], null);
-                    } else {
-                        series.add(xVals[n], yVals[index] + offset);
-                    }
-                }
-            }
-            dataset.addSeries(series);
-            renderer.setSeriesPaint(dataset.indexOf(series), paint);
-        }
-    }
-
-    /**
-     * Finds the average of points that are above the mean + nSigma * sigma of
-     * the given array, where mean is the full mean, and sigma is the full
-     * standard deviation.
-     * 
-     * @param array The array to use.
-     * @param nSigma The multiplier of the standard deviation to use.
-     * @return
-     */
-    public static double findPeakAverage(double[] array, double nSigma) {
-        int nPoints = array.length;
-        if(nPoints < 1) return Double.NaN;
-
-        // Get the mean and standard deviation
-        // double max = -Double.MAX_VALUE;
-        // double min = Double.MAX_VALUE;
-        double sum = 0.0;
-        double sumsq = 0.0;
-        for(int i = 0; i < nPoints; i++) {
-            double val = array[i];
-            // if(val > max) {
-            // max = val;
-            // }
-            // if(val < min) {
-            // min = val;
-            // }
-            sum += val;
-            sumsq += val * val;
-        }
-        double mean = sum / nPoints;
-        double sigma = (sumsq - nPoints * mean * mean) / (nPoints - 1);
-        sigma = Math.sqrt(sigma);
-
-        // Redo the mean using only points above the mean + nSigma * sigma
-        sum = 0;
-        int count = 0;
-        for(int i = 0; i < nPoints; i++) {
-            double val = array[i];
-            if(val > mean + nSigma * sigma) {
-                sum += val;
-                count++;
-            }
-        }
-        return count > 0 ? sum / count : Double.NaN;
-    }
-
-    /**
      * Handler for the list. Toggles the checked state.
      * 
      * @param ev
@@ -1212,8 +468,8 @@ public class EcgStripViewer extends JFrame implements IConstants
             return;
         }
         list.clearSelection();
-        clearPlot();
-        addStripToChart(strip);
+        plot.clearPlot();
+        plot.addStripToChart(strip);
         curStrip = strip;
         updateBeatText(strip);
     }
@@ -1235,13 +491,13 @@ public class EcgStripViewer extends JFrame implements IConstants
      * 
      * @param strip
      */
-    private void updateBeatText(Strip strip) {
+    public void updateBeatText(Strip strip) {
         String info = "Heartbeat Information" + LS;
         info += strip.getStringDate() + " " + strip.getStringTime(false) + " "
             + strip.getHeartRate() + " bpm" + " " + strip.getDiagnosisString()
             + LS + LS;
-        info += "Data Mode is " + dataMode.name + LS;
-        info += getHeartBeatInfo(dataMode);
+        info += "Data Mode is " + ecgFilterModel.getDataMode().getName() + LS;
+        info += getHeartBeatInfo(ecgFilterModel.getDataMode());
         beatTextArea.setText(info);
         beatTextArea.setCaretPosition(0);
     }
@@ -1262,16 +518,16 @@ public class EcgStripViewer extends JFrame implements IConstants
 
         // Default
         info += "Default" + LS;
-        info += getHeartBeatInfo(DataMode.DEFAULT);
-        if(dataMode == DataMode.DEFAULT) {
+        info += getHeartBeatInfo(EcgFilterModel.DataMode.DEFAULT);
+        if(ecgFilterModel.getDataMode() == EcgFilterModel.DataMode.DEFAULT) {
             scrolledTextMsg(null, info, "Heart Beat Info", 600, 400);
             return;
         }
 
         // Current data mode
         info += LS;
-        info += dataMode.name + LS;
-        info += getHeartBeatInfo(dataMode);
+        info += ecgFilterModel.getDataMode().getName() + LS;
+        info += getHeartBeatInfo(ecgFilterModel.getDataMode());
         scrolledTextMsg(null, info, "Heart Beat Info", 600, 400);
     }
 
@@ -1281,7 +537,7 @@ public class EcgStripViewer extends JFrame implements IConstants
      * @param dataMode
      * @return
      */
-    private String getHeartBeatInfo(DataMode dataMode) {
+    private String getHeartBeatInfo(EcgFilterModel.DataMode dataMode) {
         String info = "";
         if(curStrip == null) {
             info = "  There is no strip";
@@ -1299,7 +555,7 @@ public class EcgStripViewer extends JFrame implements IConstants
         int maxIndex, minIndex;
 
         stripData = curStrip.getDataAsBytes();
-        vals = dataMode.process(this, stripData);
+        vals = ecgFilterModel.getDataMode().process(ecgFilterModel, stripData);
         int[] peakIndices = Strip.getPeakIndices(vals);
         int nPeaks = peakIndices.length;
         int nIntervals = nPeaks - 1;
@@ -1409,6 +665,20 @@ public class EcgStripViewer extends JFrame implements IConstants
      */
     private void quit() {
         System.exit(0);
+    }
+
+    /**
+     * @return The value of curStrip.
+     */
+    public Strip getCurStrip() {
+        return curStrip;
+    }
+
+    /**
+     * @return The value of ecgFilterModel.
+     */
+    public EcgFilterModel getFilterModel() {
+        return ecgFilterModel;
     }
 
     /**

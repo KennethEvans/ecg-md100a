@@ -22,8 +22,8 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 
 import net.kenevans.core.utils.Utils;
+import net.kenevans.ecg.md100a.model.EcgFilterModel;
 import net.kenevans.ecg.md100a.model.IConstants;
-import net.kenevans.ecg.md100a.ui.EcgStripViewer.DataMode;
 
 /**
  * FilterOptionsDialog
@@ -155,9 +155,9 @@ public class SaveFileDialog extends JDialog implements IConstants
         label.setToolTipText("The data mode to use for conversion.");
         dataModePanel.add(label);
 
-        String[] comboItems = new String[EcgStripViewer.dataModeList.length];
+        String[] comboItems = new String[EcgFilterModel.dataModeList.length];
         for(int i = 0; i < comboItems.length; i++) {
-            comboItems[i] = EcgStripViewer.dataModeList[i].name;
+            comboItems[i] = EcgFilterModel.dataModeList[i].getName();
         }
         dataModeCombo = new JComboBox(comboItems);
         dataModeCombo.setToolTipText("The data mode to use for conversion.");
@@ -239,7 +239,8 @@ public class SaveFileDialog extends JDialog implements IConstants
             stripSpecText.setText(text);
         }
         if(dataModeCombo != null) {
-            dataModeCombo.setSelectedItem(viewer.dataMode.name);
+            dataModeCombo.setSelectedItem(viewer.getFilterModel().getDataMode()
+                .getName());
         }
     }
 
@@ -326,11 +327,11 @@ public class SaveFileDialog extends JDialog implements IConstants
             Utils.errMsg("Nothing selected for Data Mode");
             return false;
         }
-        if(index < 0 || index >= EcgStripViewer.dataModeList.length) {
+        if(index < 0 || index >= EcgFilterModel.dataModeList.length) {
             Utils.errMsg("Got invalid index for Data Mode: " + index);
             return false;
         }
-        DataMode dataMode = EcgStripViewer.dataModeList[index];
+        EcgFilterModel.DataMode dataMode = EcgFilterModel.dataModeList[index];
 
         // Call the saveFile method of the viewer
         viewer.saveFile(file, id, stripList, dataMode);
