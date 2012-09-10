@@ -24,7 +24,11 @@ public interface IConstants
     // public static final String FILE_NAME = "2012-07-09-AllFromDevice.cEcg";
     // public static final String FILE_NAME = "2012-07-13-AllFromDevice.cEcg";
     // public static final String FILE_NAME = "2012-07-17-AllFromDevice.cEcg";
-    public static final String FILE_NAME = "2012-07-20-AllFromDevice.cEcg";
+    // public static final String FILE_NAME = "2012-07-20-AllFromDevice.cEcg";
+    // public static final String FILE_NAME = "2012-07-30-AllFromDevice.cEcg";
+    // public static final String FILE_NAME = "2012-08-01-UsingLeads.cEcg";
+    public static final String FILE_NAME = "2012-08-01-AllFromDevice.cEcg";
+
     public static final String FILE_PATH = DEFAULT_DIR + "/" + FILE_NAME;
     public static final String DEFAULT_SAVE_FILE_NAME = "SavedFile.cEcg";
 

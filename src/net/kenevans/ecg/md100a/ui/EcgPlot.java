@@ -70,7 +70,7 @@ public class EcgPlot implements IConstants
      * Determines the default scale factor for converting RSA values in seconds
      * to mm on the plot. The units are mm/sec.
      */
-    private static final double RSA_SCALE_DEFAULT = 100;
+    private static final double RSA_SCALE_DEFAULT = 20;
 
     /** The dataScale to use */
     private double dataScale = DATA_SCALE_DEFAULT;
