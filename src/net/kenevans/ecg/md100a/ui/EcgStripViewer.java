@@ -395,7 +395,7 @@ public class EcgStripViewer extends JFrame implements IConstants
     }
 
     /**
-     * Loads a new file.
+     * Saves the current file.
      * 
      * @param fileName
      */
